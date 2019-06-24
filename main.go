@@ -7,56 +7,52 @@ import (
 	"time"
 
 	"github.com/streadway/amqp"
-	"golang.org/x/net/websocket"
 )
 
-func failOnError(err error, msg string) {
+func consumeMessage(qName string) error {
+	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
+		return err
 	}
-}
-
-func readHandler(ws *websocket.Conn) {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
+	if err != nil {
+		return err
+	}
 	defer ch.Close()
 
-	q, err := ch.QueueDeclare("hello", false, false, false, false, nil)
+	q, err := ch.QueueDeclare("rabbit-smoke-test-queue", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
 
-	failOnError(err, "Failed to declare a queue")
-
-	msgs, err := ch.Consume(q.Name, "", true, false, false, false, nil)
-	failOnError(err, "Failed to register a consumer")
-
-	forever := make(chan bool)
-
-	go func() {
-		for d := range msgs {
-			// fmt.Fprint(ws, d.Body)
-			log.Printf("Received a message: %s", d.Body)
-		}
-	}()
-
-	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
-	<-forever
+	msg, _, err := ch.Get(q.Name, true)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Consumed message: %s from queue: %s\n", msg.Body, qName)
+	return nil
 
 }
 
-func writeHandler(w http.ResponseWriter, r *http.Request) {
+func publishMessage(qName string) error {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	failOnError(err, "Failed to connect to RabbitMQ")
+	if err != nil {
+		return err
+	}
 	defer conn.Close()
 
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
+	if err != nil {
+		return err
+	}
 	defer ch.Close()
 
-	q, err := ch.QueueDeclare("hello", false, false, false, false, nil)
-	failOnError(err, "Failed to delare a queue")
+	q, err := ch.QueueDeclare("rabbit-smoke-test-queue", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
 
 	timeNow := time.Now()
 	body := timeNow.String()
@@ -64,15 +60,39 @@ func writeHandler(w http.ResponseWriter, r *http.Request) {
 		ContentType: "text/plain",
 		Body:        []byte(body),
 	})
-	failOnError(err, "Failed to publish a message")
-	fmt.Fprintf(w, "Write Messages.")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Published message: %s to queue: %s\n", body, qName)
+	return nil
+}
+
+func queuesHandler(w http.ResponseWriter, r *http.Request) {
+	qName := r.URL.Path[1:]
+
+	if r.Method == "GET" {
+		err := consumeMessage(qName)
+		if err != nil {
+			fmt.Println(err, "Failed to consume message from queue")
+			http.Error(w, err.Error()+"Failed to consume message from queue", http.StatusInternalServerError)
+		} else {
+			w.Write([]byte("Successfully consumed message from queue"))
+		}
+	}
+
+	if r.Method == "POST" {
+		err := publishMessage(qName)
+		if err != nil {
+			fmt.Println(err, "Failed to publish message to queue")
+			http.Error(w, err.Error()+"Failed to publish message to queue", http.StatusInternalServerError)
+		} else {
+			w.Write([]byte("Successfully published message to queue"))
+		}
+	}
 }
 
 func main() {
-	http.Handle("/read/", websocket.Handler(readHandler))
-	http.HandleFunc("/write/", writeHandler)
+	http.HandleFunc("/queues/", queuesHandler)
 
-	fs := http.FileServer(http.Dir("static/"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
