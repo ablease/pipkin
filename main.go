@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/streadway/amqp"
+	"golang.org/x/net/websocket"
 )
 
 func failOnError(err error, msg string) {
@@ -15,7 +16,7 @@ func failOnError(err error, msg string) {
 	}
 }
 
-func readHandler(w http.ResponseWriter, r *http.Request) {
+func readHandler(ws *websocket.Conn) {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
@@ -35,6 +36,7 @@ func readHandler(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		for d := range msgs {
+			// fmt.Fprint(ws, d.Body)
 			log.Printf("Received a message: %s", d.Body)
 		}
 	}()
@@ -67,7 +69,10 @@ func writeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	http.HandleFunc("/read/", readHandler)
+	http.Handle("/read/", websocket.Handler(readHandler))
 	http.HandleFunc("/write/", writeHandler)
+
+	fs := http.FileServer(http.Dir("static/"))
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
