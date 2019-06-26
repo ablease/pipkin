@@ -9,23 +9,32 @@ import (
 	"github.com/streadway/amqp"
 )
 
-func consumeMessage(qName string) error {
+func createConnection(qName string) (*amqp.Connection, *amqp.Channel, *amqp.Queue, error) {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	q, err := ch.QueueDeclare("rabbit-smoke-test-queue", false, false, false, false, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return conn, ch, &q, nil
+}
+
+func consumeMessage(qName string) error {
+	conn, ch, q, err := createConnection(qName)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-
-	ch, err := conn.Channel()
-	if err != nil {
-		return err
-	}
 	defer ch.Close()
-
-	q, err := ch.QueueDeclare("rabbit-smoke-test-queue", false, false, false, false, nil)
-	if err != nil {
-		return err
-	}
 
 	msg, _, err := ch.Get(q.Name, true)
 	if err != nil {
@@ -37,22 +46,12 @@ func consumeMessage(qName string) error {
 }
 
 func publishMessage(qName string) error {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	conn, ch, q, err := createConnection(qName)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-
-	ch, err := conn.Channel()
-	if err != nil {
-		return err
-	}
 	defer ch.Close()
-
-	q, err := ch.QueueDeclare("rabbit-smoke-test-queue", false, false, false, false, nil)
-	if err != nil {
-		return err
-	}
 
 	timeNow := time.Now()
 	body := timeNow.String()
